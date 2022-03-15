@@ -2,192 +2,686 @@ package zmgo
 
 import (
 	"context"
+	"fmt"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo"
+	"sort"
 	"testing"
 	"time"
 )
 
-func TestBatchQuery(t *testing.T) {
-	//uri := "mongodb://worker-alpha:D9FkmXcMNUiXbgs4@commgame-alpha-shard-00-00-bj91f.mongodb.net:27016,commgame-alpha-shard-00-01-bj91f.mongodb.net:27016,commgame-alpha-shard-00-02-bj91f.mongodb.net:27016,commgame-alpha-shard-01-00-bj91f.mongodb.net:27016,commgame-alpha-shard-01-01-bj91f.mongodb.net:27016,commgame-alpha-shard-01-02-bj91f.mongodb.net:27016/test?ssl=true&authSource=admin"
-	////uri := "mongodb://worker-beta:1hyFED1iKyLdS6cf@homedesign-beta-shard-00-00-ipdl7.mongodb.net:27016,homedesign-beta-shard-00-01-ipdl7.mongodb.net:27016,homedesign-beta-shard-00-02-ipdl7.mongodb.net:27016,homedesign-beta-shard-01-00-ipdl7.mongodb.net:27016,homedesign-beta-shard-01-01-ipdl7.mongodb.net:27016,homedesign-beta-shard-01-02-ipdl7.mongodb.net:27016/test?ssl=true&authSource=admin"
-	//client := NewClient(uri)
-	//db := client.Database("common")
-	//
-	//proj := "word_connect_v4"
-	//result := db.Collection("configs").FindOne(context.Background(), bson.M{"_id": proj})
-	//if result.Err() != nil {
-	//	zenlog.Error("%+v", result.Err())
-	//	return
-	//}
-	////config := &protocol.AdminProjectConfig{}
-	//config := make(map[string]interface{})
-	////config := &bson.M{}
-	//err := result.Decode(&config)
-	//if err != nil {
-	//	zenlog.Error("%+v", err)
-	//	return
-	//}
-	//zenlog.Debug("load config,%+v,%+v", proj, config)
+const (
+	URI     = "mongodb://127.0.0.1:27017/?compressors=disabled&gssapiServiceName=mongodb"
+	URI_DOC = "mongodb://root:PuPgX7d2jBQ5@TestDocumentDBScale-136593183059.us-east-1.gamma.docdb-allscale.cascades.docdb.aws.dev:27017/?tls=true&retryWrites=false"
 
-	//query := bson.M{
-	//	"_id": bson.M{"$in":[]}
-	//}
-	//uids := []string{"YxJy47FSHWz", "045nCgZgHWz", "1KDn3GWWR", "XTYOVVQkNWk", "Tda4pbWZR", "w1fX83ZWg", "c1NrSLRZR", "WkIKYBWZg", "jqNwRTWZR", "csDOfZMZR", "Mxvp_1WZg", "yLQOhFmWR", "g2evkCiZR", "om5ligWZR", "bVlEx5kZg", "raT5mdkZR", "1rTdddkZg", "EfRr35kWR", "dHWP6piWg", "xvyMz8Kig"}
-	//uids := []string{"edaXwY0mR"}
-	//fileids := bson.A{}
-	//for _, uid := range uids {
-	//	fileids = append(fileids, uid+"-1")
-	//}
-	//
-	//query := bson.M{
-	//	"_id": bson.M{"$in": fileids},
-	//}
-	//
-	//projection := bson.D{
-	//	{"_id", 1},
-	//	{"userId", 1},
-	//	{"data._userId", 1},
-	//	{"data._facebookId", 1},
-	//	{"data._userName", 1},
-	//	{"data._level", 1},
-	//	{"data._ownedHouses.newestHouseId", 1},
-	//	{"data._ownedHouses.newestRoomId", 1},
-	//	{"data._ownedHouses", 1},
-	//	{"data._userCheatCount", 1},
-	//	//{"data._userName", 1},
-	//	//{"data._facebookName", 1},
-	//	//{"data._userAvatarUrl", 1},
-	//}
-	//
-	//cursor, err := db.Collection("files").Find(nil, query, options.Find().SetProjection(projection))
-	//if err != nil {
-	//	t.Errorf("%+v", err)
-	//} else {
-	//	results := []map[string]interface{}{}
-	//	if err := DecodeAll(cursor, nil, &results); err != nil {
-	//		t.Errorf("%+v", err)
-	//	} else {
-	//		//t.Logf("results:%+v", results)
-	//		for _, v := range results {
-	//			dd, _ := json.MarshalIndent(v, "", "\t")
-	//			t.Logf("%s", dd)
-	//			//t.Logf("aa:%+v", v["data"].(map[string]interface{}))
-	//			//t.Logf("user:%+v", v)
-	//		}
-	//	}
-	//}
+	//EC2 公钥路径
+	caFilePath = "/home/ec2-user/rds-combined-ca-bundle.pem"
+	DB_NAME    = "test" //project_id
+	COL_NAME   = "user"
+)
+
+var (
+	document = []interface{}{
+		User{0, "pig", time.Now()},
+		User{1, "dog", time.Now()},
+		User{2, "cat", time.Now()},
+		User{3, "hen", time.Now()},
+		User{4, "pig", time.Now()},
+	}
+	gCommonClient     *MongoClient
+	gProjectClientMap = make(map[string]*MongoClient)
+)
+
+type User struct {
+	ID        int       `bson:"_id"`       // 用户ID
+	Name      string    `bson:"name"`      // 用来推荐的标签数据
+	UpdatedAt time.Time `bson:"updatedAt"` // 更新时间
 }
 
-func TestIndexWithExpire(t *testing.T) {
-
-	type UserInfo struct {
-		ID        string    `bson:"_id"`       // 用户ID
-		Tags      []*bson.D `bson:"tags"`      // 用来推荐的标签数据
-		UpdatedAt time.Time `bson:"updatedAt"` // 更新时间
+func (U *User) equals(I interface{}) bool {
+	if I == nil {
+		return false
 	}
-
-	dbName := "test"
-	colName := "col_test_expire"
-	uri := "mongodb://127.0.0.1:27017"
-	cli, err := NewClient(uri)
-	if err != nil {
-		t.Fatal("new client err", err)
-	}
-	db := cli.Database(dbName)
-	if err != nil {
-		t.Fatal("new db err", err)
-	}
-	col := db.Collection(colName)
-	if col == nil {
-		t.Fatal("new col err", err)
-	}
-
-	// 设置过期key
-	indexWithExpire(db, colName, 60, "updatedAt")
-	saveUser := &UserInfo{
-		ID:        "1",
-		Tags:      nil,
-		UpdatedAt: time.Now(),
-		//UpdatedAt: time.Now().Add(-60 * time.Second)
-	}
-	opt := options.UpdateOptions{}
-	opt.SetUpsert(true)
-	_, err = col.UpdateOne(context.Background(), bson.M{"_id": "1"}, bson.M{"$set": &saveUser}, &opt)
-	if err != nil {
-		t.Fatal("upsert err", err)
-	}
-
-	r := col.FindOne(context.Background(), bson.M{"_id": "1"})
-	getUser := &UserInfo{}
-	r.Decode(getUser)
-	t.Log(getUser)
+	u := I.(User)
+	return U.ID == u.ID && U.Name == u.Name
 }
 
-func TestObjectId(t *testing.T) {
-	type NotifyModel struct {
-		ID            primitive.ObjectID `bson:"_id"`           // 生成的通知唯一ID
-		UpdatedAt     time.Time          `bson:"updatedAt"`     // 更新时间，过期key
-		NotifyType    int32              `bson:"notifyType"`    // 通知类型
-		Sender        string             `bson:"sender"`        // 发起通知玩家ID
-		Receiver      string             `bson:"receiver"`      // 接收通知玩家ID
-		IdempotentKey string             `bson:"idempotentKey"` // 用来处理今日是否发送过类型请求的(type + sender_uid + segment_key)
+//TestMongo Test All Function
+func TestMongo(t *testing.T) {
+	t.Run("TestConnect", TestConnect)
+	t.Run("TestConnectMultiClient", TestConnectMultiClient)
+	t.Run("TestFindOne", TestFindOne)
+	t.Run("TestFindAll", TestFindAll)
+	t.Run("TestAggregate", TestAggregate)
+	t.Run("TestFindOneAndUpdate", TestFindOneAndUpdate)
+	t.Run("TestFindOneAndDelete", TestFindOneAndDelete)
+	t.Run("TestUpdateOne", TestUpdateOne)
+	t.Run("TestUpdateAll", TestUpdateAll)
+	t.Run("TestUpsertOne", TestUpsertOne)
+	t.Run("TestInsertOne", TestInsertOne)
+	t.Run("TestInsertMany", TestInsertMany)
+	t.Run("TestDeleteOne", TestDeleteOne)
+	t.Run("TestDeleteMany", TestDeleteMany)
+	t.Run("TestCount", TestCount)
+	t.Run("TestBulkWrite", TestBulkWrite)
+	t.Run("TestNewMyCursorAndAll", TestNewMyCursorAndAll)
+}
+
+func TestConnect(t *testing.T) {
+	defer func() {
+		t.Log("==================TestConnect end====================")
+	}()
+	t.Log("==================TestConnect begin==================")
+
+	c, err := NewMongoClient(URI)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	dbName := "test"
-	colName := "col_test_notify"
-	uri := "mongodb://127.0.0.1:27017"
-	cli, err := NewClient(uri)
-	if err != nil {
-		t.Fatal("new client err", err)
+	db := c.Database(DB_NAME)
+	if db == nil {
+		t.Fatal("get zmgo err")
 	}
-	db := cli.Database(dbName)
-	if err != nil {
-		t.Fatal("new db err", err)
-	}
-	col := db.Collection(colName)
+
+	col := c.DbColl(DB_NAME, COL_NAME)
 	if col == nil {
-		t.Fatal("new col err", err)
+		t.Fatal("get collection err")
+	}
+}
+
+func TestConnectMultiClient(t *testing.T) {
+	defer func() {
+		t.Log("==================TestConnectMultiClient end====================")
+	}()
+	t.Log("==================TestConnectMultiClient begin==================")
+
+	var addrs = make(map[string]string)
+	//可以从这里添加你的 客户端key 和 客户端uri 的键值对
+	addrs[DB_NAME] = URI
+
+	for key, uri := range addrs {
+		client, err := NewMongoClient(uri)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if key == "default" {
+			gCommonClient = client
+		} else {
+			gProjectClientMap[key] = client
+		}
 	}
 
-	opt := options.UpdateOptions{}
-	opt.SetUpsert(true)
+	setFindClient(t)
 
-	model := NotifyModel{
-		ID:            primitive.NewObjectID(),
-		UpdatedAt:     time.Now(),
-		NotifyType:    int32(1),
-		Sender:        "sender",
-		Receiver:      "receiver",
-		IdempotentKey: "20200223",
+	c, err := findClient(DB_NAME)
+	if err != nil || c == nil {
+		t.Fatalf("get client err:%v", err)
 	}
 
-	insertResult, err := col.InsertOne(context.Background(), model)
+	col := Collection(DB_NAME, COL_NAME)
+	if col == nil {
+		t.Fatal("get collection error")
+	}
+}
+
+func TestFindOne(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestFindOne end====================")
+	}()
+	t.Log("==================TestFindOne begin==================")
+
+	initMongoClient(t)
+	insertTestData(t)
+
+	_id := 3
+	var result *User
+	err := FindOne(&result, DB_NAME, COL_NAME, bson.M{"_id": _id})
 	if err != nil {
-		t.Fatal("upsert err", err)
+		t.Fatal(err)
 	}
-	t.Log(insertResult)
 
-	//obj, err := primitive.ObjectIDFromHex("5ea27a378a6cb8578b673410")
-	//if err != nil {
-	//	t.Log(err)
-	//}
-	r := col.FindOne(context.Background(), bson.M{"_id": insertResult.InsertedID})
-	t.Log(r)
-	findModel := &NotifyModel{}
-	r.Decode(findModel)
-	t.Log(findModel)
+	if !result.equals(document[_id]) {
+		t.Fatal("FindOne Fail")
+	}
+	t.Log(fmt.Sprintf("FindOne Success: %+v", result))
+}
 
-	deleteResult, err := col.DeleteOne(context.Background(), bson.M{"_id": findModel.ID})
+func TestFindAll(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestFindAll end====================")
+	}()
+	t.Log("==================TestFindAll begin==================")
+
+	initMongoClient(t)
+	insertTestData(t)
+
+	result := make([]*User, 0)
+	err := FindAll(&result, DB_NAME, COL_NAME, bson.M{})
 	if err != nil {
-		t.Fatal("delete one err", err)
+		t.Fatal(err)
 	}
+	for _id, v := range result {
+		t.Log(fmt.Sprintf("%+v", v))
+		if !v.equals(document[_id]) {
+			t.Fatal("FindAll Fail")
+		}
+	}
+	t.Log("FindAll Success")
+}
 
-	t.Log(deleteResult.DeletedCount)
+func TestAggregate(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestAggregate end====================")
+	}()
+	t.Log("==================TestAggregate begin==================")
 
-	_, err = col.DeleteOne(context.Background(), bson.M{"_id": findModel.ID})
+	initMongoClient(t)
+	insertTestData(t)
+	skipNum, gteNum := 1, 1
+	result := make([]*User, 0)
+	resultDocument := document[gteNum+skipNum:]
+	sort.Slice(resultDocument, func(i, j int) bool {
+		return resultDocument[i].(User).Name < resultDocument[j].(User).Name
+	})
+	pipeline := []bson.M{
+		{"$match": bson.M{"_id": bson.M{"$gte": gteNum}}},
+		{"$skip": skipNum},
+		{"$sort": bson.M{"name": 1}},
+	}
+	err := Aggregate(&result, DB_NAME, COL_NAME, pipeline)
 	if err != nil {
-		t.Fatal("delete one err", err)
+		t.Fatal(err)
 	}
+
+	for _id, v := range result {
+		t.Log(fmt.Sprintf("%+v", v))
+		if !v.equals(resultDocument[_id]) {
+			t.Fatal("Aggregate Fail")
+		}
+	}
+	t.Log("Aggregate Success")
+}
+
+func TestFindOneAndUpdate(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestFindOneAndUpdate end====================")
+	}()
+	t.Log("==================TestFindOneAndUpdate begin==================")
+
+	initMongoClient(t)
+	insertTestData(t)
+
+	filter_pig := bson.M{"name": "pig"}
+	filter_bigPig := bson.M{"name": "bigPig"}
+	oldCount_pig, err := Count(DB_NAME, COL_NAME, filter_pig)
+	oldCount_bigPig, err := Count(DB_NAME, COL_NAME, filter_bigPig)
+	t.Logf("the count of pig document before FindOneAndUpdate : %d", oldCount_pig)
+	t.Logf("the count of bigPig document before FindOneAndUpdate : %d", oldCount_bigPig)
+
+	t.Log("[FindOneAndUpdate document's name to bigPig]")
+	update := bson.M{"$set": filter_bigPig}
+	err = FindOneAndUpdate(DB_NAME, COL_NAME, filter_pig, update)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newCount_pig, err := Count(DB_NAME, COL_NAME, filter_pig)
+	newCount_bigPig, err := Count(DB_NAME, COL_NAME, filter_bigPig)
+	t.Logf("the count of pig document after FindOneAndUpdate : %d", newCount_pig)
+	t.Logf("the count of bigPig document after FindOneAndUpdate : %d", newCount_bigPig)
+
+	if newCount_pig != oldCount_pig-1 && newCount_bigPig != oldCount_bigPig+1 {
+		t.Fatal("FindOneAndUpdate Fail")
+	}
+	t.Log("FindOneAndUpdate Success")
+}
+
+func TestFindOneAndDelete(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestFindOneAndDelete end====================")
+	}()
+	t.Log("==================TestFindOneAndDelete begin==================")
+
+	initMongoClient(t)
+	insertTestData(t)
+
+	filter := bson.M{"_id": bson.M{"$gte": 2}}
+	oldCount, err := Count(DB_NAME, COL_NAME, filter)
+	t.Logf("the count of document before FindOneAndDelete : %d", oldCount)
+
+	err = FindOneAndDelete(DB_NAME, COL_NAME, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newCount, err := Count(DB_NAME, COL_NAME, filter)
+	t.Logf("the count of document after FindOneAndDelete : %d", newCount)
+	if newCount != oldCount-1 {
+		t.Fatal("FindOneAndDelete Fail")
+	}
+	t.Log(fmt.Sprintf("FindOneAndDelete Success"))
+}
+
+func TestUpdateOne(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestUpdateOne end====================")
+	}()
+	t.Log("==================TestUpdateOne begin==================")
+
+	initMongoClient(t)
+	insertTestData(t)
+
+	filter_pig := bson.M{"name": "pig"}
+	filter_bigPig := bson.M{"name": "bigPig"}
+	oldCount_pig, err := Count(DB_NAME, COL_NAME, filter_pig)
+	oldCount_bigPig, err := Count(DB_NAME, COL_NAME, filter_bigPig)
+	t.Logf("the count of pig document before UpdateOne : %d", oldCount_pig)
+	t.Logf("the count of bigPig document before UpdateOne : %d", oldCount_bigPig)
+
+	t.Log("[updateOne document's name to bigPig]")
+	update := bson.M{"$set": filter_bigPig}
+	err = UpdateOne(DB_NAME, COL_NAME, filter_pig, update)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newCount_pig, err := Count(DB_NAME, COL_NAME, filter_pig)
+	newCount_bigPig, err := Count(DB_NAME, COL_NAME, filter_bigPig)
+	t.Logf("the count of pig document after UpdateOne : %d", newCount_pig)
+	t.Logf("the count of bigPig document after UpdateOne : %d", newCount_bigPig)
+
+	if newCount_pig != oldCount_pig-1 && newCount_bigPig != oldCount_bigPig+1 {
+		t.Fatal("TestUpdateOne Fail")
+	}
+	t.Log(fmt.Sprintf("TestUpdateOne Success"))
+}
+
+func TestUpdateAll(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestUpdateAll end====================")
+	}()
+	t.Log("==================TestUpdateAll begin==================")
+
+	initMongoClient(t)
+	insertTestData(t)
+
+	filter_pig := bson.M{"name": "pig"}
+	filter_bigPig := bson.M{"name": "bigPig"}
+	oldCount_pig, err := Count(DB_NAME, COL_NAME, filter_pig)
+	oldCount_bigPig, err := Count(DB_NAME, COL_NAME, filter_bigPig)
+	t.Logf("the count of pig document before UpdateAll : %d", oldCount_pig)
+	t.Logf("the count of bigPig document before UpdateAll : %d", oldCount_bigPig)
+
+	t.Log("[UpdateAll document's name to bigPig]")
+	update := bson.M{"$set": filter_bigPig}
+	err = UpdateAll(DB_NAME, COL_NAME, filter_pig, update)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newCount_pig, err := Count(DB_NAME, COL_NAME, filter_pig)
+	newCount_bigPig, err := Count(DB_NAME, COL_NAME, filter_bigPig)
+	t.Logf("the count of pig document after UpdateAll : %d", newCount_pig)
+	t.Logf("the count of bigPig document after UpdateAll : %d", newCount_bigPig)
+
+	if newCount_pig != 0 && newCount_bigPig != oldCount_pig+oldCount_bigPig {
+		t.Fatal("TestUpdateAll Fail")
+	}
+	t.Log(fmt.Sprintf("TestUpdateAll Success"))
+}
+
+func TestUpsertOne(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestUpsertOne end====================")
+	}()
+	t.Log("==================TestUpsertOne begin==================")
+
+	initMongoClient(t)
+	filter_pig := bson.M{"name": "pig"}
+	filter_bigPig := bson.M{"name": "bigPig"}
+
+	t.Log("==================no document and upsert = insert==================")
+
+	//之前没有pig 所以会插入
+	oldCount_pig, err := Count(DB_NAME, COL_NAME, filter_pig)
+	oldCount_bigPig, err := Count(DB_NAME, COL_NAME, filter_bigPig)
+	t.Logf("the count of pig document before UpsertOne : %d", oldCount_pig)
+	t.Logf("the count of bigPig document before UpsertOne : %d", oldCount_bigPig)
+
+	t.Log("[UpsertOne document's name from pig to bigPig]")
+	update := bson.M{"$set": filter_bigPig}
+	err = UpsertOne(DB_NAME, COL_NAME, filter_pig, update)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newCount_pig, err := Count(DB_NAME, COL_NAME, filter_pig)
+	newCount_bigPig, err := Count(DB_NAME, COL_NAME, filter_bigPig)
+	t.Logf("the count of pig document after UpsertOne : %d", newCount_pig)
+	t.Logf("the count of bigPig document after UpsertOne : %d", newCount_bigPig)
+
+	if newCount_bigPig != oldCount_bigPig+1 {
+		t.Fatal("UpsertOne Fail")
+	}
+	t.Log("==================have document and upsert = update==================")
+
+	//已经有了bigPig 所以会更新
+	oldCount_pig, err = Count(DB_NAME, COL_NAME, filter_pig)
+	oldCount_bigPig, err = Count(DB_NAME, COL_NAME, filter_bigPig)
+	t.Logf("the count of pig document before UpsertOne : %d", oldCount_pig)
+	t.Logf("the count of bigPig document before UpsertOne : %d", oldCount_bigPig)
+
+	t.Log("[UpsertOne document's t name from bigPig to pig]")
+	update = bson.M{"$set": filter_pig}
+	err = UpdateOne(DB_NAME, COL_NAME, filter_bigPig, update)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newCount_pig, err = Count(DB_NAME, COL_NAME, filter_pig)
+	newCount_bigPig, err = Count(DB_NAME, COL_NAME, filter_bigPig)
+	t.Logf("the count of pig document after UpsertOne : %d", newCount_pig)
+	t.Logf("the count of bigPig document after UpsertOne : %d", newCount_bigPig)
+
+	if newCount_pig != oldCount_pig+1 && newCount_bigPig != oldCount_bigPig-1 {
+		t.Fatal("UpsertOne Fail")
+	}
+	t.Log(fmt.Sprintf("UpsertOne Success"))
+}
+
+func TestInsertOne(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestInsertOne end====================")
+	}()
+	t.Log("==================TestInsertOne begin==================")
+
+	initMongoClient(t)
+
+	var result *User
+	doc := &User{520, "pig", time.Now()}
+	t.Log("[Insert document: {_id:520, name:pig, updateAt:time.Now()}]")
+
+	_, err := InsertOne(DB_NAME, COL_NAME, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = FindOne(&result, DB_NAME, COL_NAME, doc)
+	if err != nil || !result.equals(*doc) {
+		t.Fatal("TestInsertOne Fail")
+	}
+	t.Log("TestInsertOne Success")
+}
+
+func TestInsertMany(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestInsertMany end====================")
+	}()
+	t.Log("==================TestInsertMany begin==================")
+
+	initMongoClient(t)
+	t.Log("[Insert 5 documents {_id, name, updateAt} and the _id is in [0, 1, 2, 3, 4]]")
+	insertTestData(t)
+
+	result := make([]*User, 0)
+	filter := bson.M{}
+	err := FindAll(&result, DB_NAME, COL_NAME, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Log("After insert and findAll documents result :")
+	for _id, v := range result {
+		t.Log(fmt.Sprintf("%+v", v))
+		if !v.equals(document[_id]) {
+			t.Fatal("TestInsertMany Fail")
+		}
+	}
+	t.Log("TestInsertMany Success")
+}
+
+func TestDeleteOne(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestDeleteOne end====================")
+	}()
+	t.Log("==================TestDeleteOne begin==================")
+
+	initMongoClient(t)
+	insertTestData(t)
+
+	filter := bson.M{"_id": bson.M{"$gte": 2}}
+	oldCount, err := Count(DB_NAME, COL_NAME, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("the Count of Document id >= 2 before DeleteOne :", oldCount)
+
+	t.Log("[DeleteOne which document id >= 2]")
+	err = DeleteOne(DB_NAME, COL_NAME, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newCount, err := Count(DB_NAME, COL_NAME, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("the Count of Document id >= 2 after DeleteOne :", newCount)
+
+	if newCount != oldCount-1 {
+		t.Fatal("TestDeleteOne Fail")
+	}
+	t.Log("TestDeleteOne Success")
+}
+
+func TestDeleteMany(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestDeleteMany end====================")
+	}()
+	t.Log("==================TestDeleteMany begin==================")
+
+	initMongoClient(t)
+	insertTestData(t)
+
+	filter := bson.M{"_id": bson.M{"$gte": 2}}
+	oldCount, err := Count(DB_NAME, COL_NAME, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("the Count of Document id >= 2 before deleteMany :", oldCount)
+
+	t.Log("[deleteMany which document id >= 2]")
+	err = DeleteMany(DB_NAME, COL_NAME, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newCount, err := Count(DB_NAME, COL_NAME, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("the Count of Document id >= 2 after deleteMany :", newCount)
+
+	if newCount != 0 {
+		t.Fatal("TestDeleteMany Fail")
+	}
+	t.Log("TestDeleteMany Success")
+}
+
+func TestCount(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestCount end====================")
+	}()
+	t.Log("==================TestCount begin==================")
+
+	initMongoClient(t)
+	t.Log("[insert 5 document]")
+	insertTestData(t)
+
+	filter := bson.M{}
+	count, err := Count(DB_NAME, COL_NAME, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 5 {
+		t.Fatal("TestCount Fail")
+	}
+	t.Log("TestCount Success")
+}
+
+func TestBulkWrite(t *testing.T) {
+	defer func() {
+		deleteTestData(t)
+		t.Log("==================TestBulkWrite end====================")
+	}()
+	t.Log("==================TestBulkWrite begin==================")
+
+	initMongoClient(t)
+
+	t.Log("[writeModel is upsert 5 document]")
+	operations := make([]mongo.WriteModel, 0)
+	for i := 0; i < 5; i++ {
+		query := bson.M{"_id": document[i].(User).ID}
+		update := bson.M{"$set": bson.M{"name": document[i].(User).Name}}
+		operation := mongo.NewUpdateOneModel().SetFilter(query).SetUpdate(update).SetUpsert(true)
+		operations = append(operations, operation)
+	}
+
+	err := BulkWrite(DB_NAME, COL_NAME, operations)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := make([]*User, 0)
+	err = FindAll(&result, DB_NAME, COL_NAME, bson.M{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("Document of after BulkWrite:")
+	for i, v := range result {
+		t.Log(fmt.Sprintf("%+v", v))
+		if !v.equals(document[i]) {
+			t.Fatal("BulkWrite Fail")
+		}
+	}
+	t.Log("BulkWrite Success")
+}
+
+func TestNewMyCursorAndAll(t *testing.T) {
+	t.Log("==================TestNewMyCursorAndAll begin==================")
+	c, err := NewDocumentClient(URI_DOC, caFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		err = c.DeleteMany(DB_NAME, COL_NAME, bson.M{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Log("[delete test data success]")
+		t.Log("==================TestNewMyCursorAndAll end====================")
+	}()
+
+	result := make([]*User, 0)
+	ctx := context.Background()
+
+	t.Log("[insert two document for test]")
+	_, err = c.InsertMany(DB_NAME, COL_NAME, document)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cursor, err := c.DbColl(DB_NAME, COL_NAME).Find(ctx, bson.M{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = NewMyCursor(cursor).All(&result)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Log("NewMyCursor().All(&result) decode result:")
+	for _id, v := range result {
+		if !v.equals(document[_id]) {
+			t.Fatal("TestNewMyCursorAndAll Fail")
+		}
+		t.Log(v)
+	}
+	t.Log("TestNewMyCursorAndAll Success")
+}
+
+/**
+ * Function for TestUnit
+ */
+
+//setFindClient 传递FindClient方法
+func setFindClient(t *testing.T) {
+	SetFindClient(
+		func(projectId string) (*MongoClient, error) {
+			var client *MongoClient
+			if c, ok := gProjectClientMap[projectId]; ok {
+				client = c
+			} else {
+				client = gCommonClient
+			}
+			return client, nil
+		})
+	t.Log("SetSendClient Success")
+}
+
+//initMongoClient 初始化mongo客户端并传递FindClient方法
+func initMongoClient(t *testing.T) {
+	var addrs = make(map[string]string)
+	addrs[DB_NAME] = URI
+
+	for key, uri := range addrs {
+		//client, err := NewDocumentClient(uri,caFilePath)
+		client, err := NewMongoClient(uri)
+		if err != nil {
+			t.Fatalf("initMongoClient fail=>%+v", err)
+		}
+
+		if key == "default" {
+			gCommonClient = client
+		} else {
+			gProjectClientMap[key] = client
+		}
+	}
+	setFindClient(t)
+}
+
+//insertTestData 插入测试数据
+func insertTestData(t *testing.T) {
+	deleteTestData(t)
+	_, err := InsertMany(DB_NAME, COL_NAME, document)
+	if err != nil {
+		t.Fatalf("insertTestData fail=> %+v", err)
+	}
+	t.Log("insertTestData Success")
+}
+
+//deleteTestData 清空测试数据
+func deleteTestData(t *testing.T) {
+	filter := bson.D{}
+	err := DeleteMany(DB_NAME, COL_NAME, filter)
+	if err != nil {
+		t.Fatalf("deleteTestData fail=> %+v", err)
+	}
+	t.Log("deleteTestData Success")
 }
