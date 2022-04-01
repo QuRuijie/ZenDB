@@ -583,7 +583,7 @@ func TestBulkWrite(t *testing.T) {
 
 func TestNewMyCursorAndAll(t *testing.T) {
 	t.Log("==================TestNewMyCursorAndAll begin==================")
-	c, err := NewDocumentClient(URI_DOC, caFilePath)
+	c, err := NewMongoClient(URI)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -39,7 +39,7 @@ var _ = Describe("Test Redis", func() {
 			MinIdleConns:       0,
 			MaxConnAge:         0,
 		}
-		client = newClient(&opt, "test")
+		client = NewClient(&opt, "test")
 		// HaveOccurred will success if err is non-nil so HaveOccurred Test not success
 		Expect(client.FlushDB().Err()).ShouldNot(HaveOccurred())
 	})
@@ -858,5 +858,4 @@ var _ = Describe("Test Redis", func() {
 			Expect(lIndex).Should(Equal("r2"))
 		})
 	})
-
 })

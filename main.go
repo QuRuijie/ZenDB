@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"github.com/QuRuijie/zenDB/prom"
 	"github.com/QuRuijie/zenDB/zmgo"
+	"github.com/QuRuijie/zenDB/zredis"
+	"github.com/go-redis/redis"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"net/http"
+	"go.mongodb.org/mongo-driver/bson"
 	"time"
 )
 
@@ -15,7 +18,7 @@ var gProjectClientMap = make(map[string]*zmgo.MongoClient)
 const (
 	URI  = "mongodb://127.0.0.1:27017/?compressors=disabled&gssapiServiceName=mongodb"
 	KEY  = "default"
-	ADDR = "127.0.0.1:6380"
+	ADDR = "127.0.0.1:6379"
 )
 
 var (
@@ -39,8 +42,46 @@ var (
 )
 
 func main() {
-	recordMetrics()
+	TestRedis()
+}
 
-	http.Handle("/metrics", promhttp.Handler())
-	http.ListenAndServe(":2112", nil)
+func TestMongo() {
+	c, err := zmgo.NewMongoClient("mongodb://127.0.0.1:27017/?compressors=disabled&gssapiServiceName=mongodb")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	c.InsertOne("test", "test_defer", bson.M{"a": "a"})
+	result := make([]interface{}, 0)
+	fmt.Println("FindAll Start")
+	err = c.FindAll(&result, "test", "test_defer", bson.M{})
+	fmt.Println("FindAll End ", err)
+}
+
+func TestRedis() {
+	//recordMetrics()
+	go prom.StartServer("8888")
+	time.Sleep(1 * time.Second)
+	fmt.Println("/?")
+
+	opt := redis.Options{
+		Addr:               ADDR,
+		DB:                 15,
+		DialTimeout:        10 * time.Second,
+		ReadTimeout:        30 * time.Second,
+		WriteTimeout:       30 * time.Second,
+		PoolSize:           1,
+		PoolTimeout:        30 * time.Second,
+		IdleTimeout:        500 * time.Millisecond,
+		IdleCheckFrequency: 500 * time.Millisecond,
+		MinIdleConns:       0,
+		MaxConnAge:         0,
+	}
+	client := zredis.NewClient(&opt, "test")
+	client.Set("k", "v", 0)
+	client.Get("k")
+
+	for true {
+
+	}
 }
