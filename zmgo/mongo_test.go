@@ -11,8 +11,7 @@ import (
 )
 
 const (
-	URI     = "mongodb://127.0.0.1:27017/?compressors=disabled&gssapiServiceName=mongodb"
-	URI_DOC = "mongodb://root:PuPgX7d2jBQ5@TestDocumentDBScale-136593183059.us-east-1.gamma.docdb-allscale.cascades.docdb.aws.dev:27017/?tls=true&retryWrites=false"
+	URI = "mongodb://127.0.0.1:27017/?compressors=disabled&gssapiServiceName=mongodb"
 
 	//EC2 公钥路径
 	caFilePath = "/home/ec2-user/rds-combined-ca-bundle.pem"
