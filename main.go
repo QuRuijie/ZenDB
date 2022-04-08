@@ -42,19 +42,21 @@ var (
 )
 
 func main() {
-	TestRedis()
+	//TestRedis()
+	TestMongo()
 }
 
 func TestMongo() {
-	c, err := zmgo.NewMongoClient("mongodb://127.0.0.1:27017/?compressors=disabled&gssapiServiceName=mongodb")
+	c, err := zmgo.NewMongoClientWithProm("mongodb://127.0.0.1:27017/?compressors=disabled&gssapiServiceName=mongodb")
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
+
 	c.InsertOne("test", "test_defer", bson.M{"a": "a"})
-	result := make([]interface{}, 0)
+	var result interface{}
 	fmt.Println("FindAll Start")
-	err = c.FindAll(&result, "test", "test_defer", bson.M{})
+	err = c.FindOne(&result, "test", "test_defer", bson.M{})
 	fmt.Println("FindAll End ", err)
 }
 

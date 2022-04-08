@@ -37,44 +37,44 @@ const (
 type MongoClient struct {
 	client *mongo.Client
 	dbs    map[string]*mongo.Database
+	prom   bool
 }
 
-// FC You can select your client by your self
-type FC func(projectId string) (*MongoClient, error)
-
-// FindClient If you want select client by yourself you need assign a value to this variable
-var FindClient FC
-
-// you must send a function what can return a MongoClient by your message
-var findClient FC = func(projectId string) (*MongoClient, error) {
-	if FindClient == nil {
-		return nil, errors.New("No function to return a client, please execute SetFindClient()!")
-	}
-	return FindClient(projectId)
-}
-
-// ----------------------------------- Common Method -----------------------------------
-
-// NewMongoClient create MongoClient use default MongoConnPoolLimit
+// NewMongoClient create MongoClient use default options.ClientOptions
 func NewMongoClient(uri string) (*MongoClient, error) {
-	option := options.Client().ApplyURI(uri).SetMaxPoolSize(MongoConnPoolLimit).SetReadPreference(readpref.Nearest())
-	return NewMongoClientWithOption(option)
+	return NewClient(false, getOptions(uri))
 }
 
-//NewDocumentClient create MongoClient
+// NewMongoClientWithProm create MongoClient use Prom Monitor
+func NewMongoClientWithProm(uri string) (*MongoClient, error) {
+	return NewClient(true, getOptions(uri))
+}
+
+//NewDocumentClient create MongoClient use default options.ClientOptions and TLS
 func NewDocumentClient(uri, CAFile string) (*MongoClient, error) {
 	tlsConfig, err := GetCustomTLSConfig(CAFile)
 	if err != nil {
 		return nil, fmt.Errorf("get TLS config fail:%+v\n", err)
 	}
 
-	option := options.Client().ApplyURI(uri).SetTLSConfig(tlsConfig)
-	return NewMongoClientWithOption(option)
+	opts := getOptions(uri).SetTLSConfig(tlsConfig)
+	return NewClient(false, opts)
 }
 
-// NewMongoClientWithOption NewMongoClient create MongoClient by your options.ClientOptions
-func NewMongoClientWithOption(option *options.ClientOptions) (*MongoClient, error) {
-	client, err := mongo.NewClient(option)
+//NewDocumentClientWithProm create MongoClient use Prom Monitor
+func NewDocumentClientWithProm(uri, CAFile string) (*MongoClient, error) {
+	tlsConfig, err := GetCustomTLSConfig(CAFile)
+	if err != nil {
+		return nil, fmt.Errorf("get TLS config fail:%+v\n", err)
+	}
+
+	opts := getOptions(uri).SetTLSConfig(tlsConfig)
+	return NewClient(true, opts)
+}
+
+// NewClient NewMongoClient create MongoClient by your options.ClientOptions
+func NewClient(prom bool, opts ...*options.ClientOptions) (*MongoClient, error) {
+	client, err := mongo.NewClient(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create mongo fail:%+v\n", err)
 	}
@@ -92,17 +92,7 @@ func NewMongoClientWithOption(option *options.ClientOptions) (*MongoClient, erro
 		return nil, fmt.Errorf("ping mongo fail: %+v", err)
 	}
 
-	return &MongoClient{client: client, dbs: make(map[string]*mongo.Database)}, nil
-}
-
-//SetFindClient If you want select client by yourself you need execute it
-func SetFindClient(FindClientFunction FC) {
-	FindClient = FindClientFunction
-}
-
-// CollectionFromCommon 从Common数据库中获得Collection
-func CollectionFromCommon(proj string, collName string) *mongo.Collection {
-	return Collection(proj, collName)
+	return &MongoClient{client: client, dbs: make(map[string]*mongo.Database), prom: prom}, nil
 }
 
 // GetCustomTLSConfig 获取TLS证书
@@ -125,14 +115,15 @@ func GetCustomTLSConfig(caFile string) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// Collection 返回对应项目下的Collection
-func Collection(projectId, collection string) *mongo.Collection {
-	c, err := findClient(projectId)
-	if err == nil {
-		return c.DbColl(projectId, collection)
-	}
-	return nil
+func getOptions(uri string) *options.ClientOptions {
+	opts := options.Client()
+	opts.ApplyURI(uri)
+	opts.SetMaxPoolSize(MongoConnPoolLimit)
+	opts.SetReadPreference(readpref.Nearest())
+	return opts
 }
+
+// ----------------------------------- Common Method -----------------------------------
 
 func DB(projectId string, dbname string) *mongo.Database {
 	c, err := findClient(projectId)
@@ -142,7 +133,14 @@ func DB(projectId string, dbname string) *mongo.Database {
 	return c.Database(dbname)
 }
 
-// Database 返回database
+func Collection(projectId, collection string) *mongo.Collection {
+	c, err := findClient(projectId)
+	if err == nil {
+		return c.DbColl(projectId, collection)
+	}
+	return nil
+}
+
 func (c *MongoClient) Database(name string) *mongo.Database {
 	if db, ok := c.dbs[name]; ok {
 		return db
@@ -155,9 +153,28 @@ func (c *MongoClient) Database(name string) *mongo.Database {
 	return db
 }
 
-// DbColl 返回指定database 的collection
 func (c *MongoClient) DbColl(dbName, coll string) *mongo.Collection {
 	return c.Database(dbName).Collection(coll)
+}
+
+
+// FC You can select your client by your self
+type FC func(projectId string) (*MongoClient, error)
+
+// FindClient If you want select client by yourself you need assign a value to this variable
+var FindClient FC
+
+//SetFindClient If you want select client by yourself you need execute it
+func SetFindClient(FindClientFunction FC) {
+	FindClient = FindClientFunction
+}
+
+// you must send a function what can return a MongoClient by your message
+var findClient FC = func(projectId string) (*MongoClient, error) {
+	if FindClient == nil {
+		return nil, errors.New("No function to return a client, please execute SetFindClient()!")
+	}
+	return FindClient(projectId)
 }
 
 // --------------------------------- Method without Client ---------------------------------------
@@ -179,7 +196,6 @@ func FindAll(result interface{}, dbName, collName string, query interface{}, opt
 }
 
 func FindOneAndUpdate(dbName, collName string, filter interface{}, update interface{}, opts ...*options.FindOneAndUpdateOptions) error {
-
 	c, err := findClient(dbName)
 	if err != nil {
 		return err
@@ -279,7 +295,7 @@ func BulkWrite(dbName, collName string, models []mongo.WriteModel, opts ...*opti
 // --------------------------------- Method with Client --------------------------------------------
 
 func (c *MongoClient) FindOne(result interface{}, dbName, collName string, query interface{}, opts ...*options.FindOneOptions) (err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "FindOne", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
@@ -295,7 +311,7 @@ func (c *MongoClient) FindOne(result interface{}, dbName, collName string, query
 }
 
 func (c *MongoClient) FindAll(result interface{}, dbName, collName string, query interface{}, opts ...*options.FindOptions) (err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "FindAll", err) }(prom.NowMicrosecond())
 
 	resultv := reflect.ValueOf(result)
 	if resultv.Kind() != reflect.Ptr || resultv.Elem().Kind() != reflect.Slice {
@@ -317,7 +333,7 @@ func (c *MongoClient) FindAll(result interface{}, dbName, collName string, query
 }
 
 func (c *MongoClient) FindOneAndUpdate(dbName, collName string, filter interface{}, update interface{}, opts ...*options.FindOneAndUpdateOptions) (err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "FindOneAndUpdate", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
@@ -329,7 +345,7 @@ func (c *MongoClient) FindOneAndUpdate(dbName, collName string, filter interface
 }
 
 func (c *MongoClient) FindOneAndDelete(dbName, collName string, filter interface{}, opts ...*options.FindOneAndDeleteOptions) (err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "FindOneAndDelete", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
@@ -341,7 +357,7 @@ func (c *MongoClient) FindOneAndDelete(dbName, collName string, filter interface
 }
 
 func (c *MongoClient) UpdateOne(dbName, collName string, filter interface{}, update interface{}, opts ...*options.UpdateOptions) (err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "UpdateOne", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
@@ -353,7 +369,7 @@ func (c *MongoClient) UpdateOne(dbName, collName string, filter interface{}, upd
 }
 
 func (c *MongoClient) UpdateAll(dbName, collName string, filter interface{}, update interface{}, opts ...*options.UpdateOptions) (err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "UpdateAll", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
@@ -364,9 +380,8 @@ func (c *MongoClient) UpdateAll(dbName, collName string, filter interface{}, upd
 	return
 }
 
-// 暂时不用 metric
 func (c *MongoClient) UpsertOne(dbName, collName string, filter interface{}, update interface{}, opts ...*options.UpdateOptions) (err error) {
-	//defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "UpsertOne", err) }(prom.NowMicrosecond())
 
 	upsert := true
 	if len(opts) > 0 {
@@ -381,7 +396,7 @@ func (c *MongoClient) UpsertOne(dbName, collName string, filter interface{}, upd
 }
 
 func (c *MongoClient) InsertOne(dbName, collName string, document interface{}, opts ...*options.InsertOneOptions) (insertedID interface{}, err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "InsertOne", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
@@ -397,7 +412,7 @@ func (c *MongoClient) InsertOne(dbName, collName string, document interface{}, o
 }
 
 func (c *MongoClient) InsertMany(dbName, collName string, documents []interface{}, opts ...*options.InsertManyOptions) (result *mongo.InsertManyResult, err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "InsertMany", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
@@ -409,7 +424,7 @@ func (c *MongoClient) InsertMany(dbName, collName string, documents []interface{
 }
 
 func (c *MongoClient) DeleteOne(dbName, collName string, filter interface{}, opts ...*options.DeleteOptions) (err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "DeleteOne", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
@@ -421,7 +436,7 @@ func (c *MongoClient) DeleteOne(dbName, collName string, filter interface{}, opt
 }
 
 func (c *MongoClient) DeleteMany(dbName, collName string, filter interface{}, opts ...*options.DeleteOptions) (err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "DeleteMany", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
@@ -433,24 +448,18 @@ func (c *MongoClient) DeleteMany(dbName, collName string, filter interface{}, op
 }
 
 func (c *MongoClient) Count(dbName, collName string, filter interface{}, opts ...*options.CountOptions) (count int64, err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "Count", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
 		return count, fmt.Errorf("cannot find collection:%+v,%+v", dbName, collName)
 	}
-	// documentDB 不支持count,因为count 内用了aggregate
-	//result := make([]interface{}, 0)
-	//err = c.FindAll(&result, dbName, collName, filter)
-	//if err != nil {
-	//	return count, fmt.Errorf("FindAll err: %v", err)
-	//}
-	//return int64(len(result)), err
+
 	return coll.CountDocuments(context.Background(), filter, opts...)
 }
 
 func (c *MongoClient) Aggregate(result interface{}, dbName, collName string, pipeline interface{}, opts ...*options.AggregateOptions) (err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "Aggregate", err) }(prom.NowMicrosecond())
 
 	resultv := reflect.ValueOf(result)
 	if resultv.Kind() != reflect.Ptr || resultv.Elem().Kind() != reflect.Slice {
@@ -472,7 +481,7 @@ func (c *MongoClient) Aggregate(result interface{}, dbName, collName string, pip
 }
 
 func (c *MongoClient) BulkWrite(dbName, collName string, models []mongo.WriteModel, opts ...*options.BulkWriteOptions) (err error) {
-	defer func(startTime int64) { prom.SetMongoMetrics(startTime, err) }(prom.NowMillisecond())
+	defer func(startTime int64) { c.promMonitor(startTime, "BulkWrite", err) }(prom.NowMicrosecond())
 
 	coll := c.DbColl(dbName, collName)
 	if coll == nil {
@@ -653,4 +662,16 @@ func EnsureUniqIndex(db *mongo.Database, collection string, keys ...string) {
 func EnsureIndex(db *mongo.Database, collection string, keys ...string) {
 	defaultOps := &options.IndexOptions{}
 	ensureIndexKey(db, collection, defaultOps, keys...)
+}
+
+// --------------------------------- Prom Monitor----------------------------------------
+
+func (c *MongoClient) promMonitor(start int64, method string, err error) {
+	if c.prom {
+		status := "Success"
+		if err != nil {
+			status = "Fail"
+		}
+		prom.SetMongoMetrics(float64(prom.NowMicrosecond()-start), method, status)
+	}
 }

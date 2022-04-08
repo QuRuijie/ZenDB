@@ -45,30 +45,23 @@ func StartServer(addr string) (err error) {
 }
 
 // SetMongoMetrics 设置mongo指标
-func SetMongoMetrics(start int64, err error) {
-	method := runFuncName(4)
-	status := "Success"
-	if err != nil {
-		status = "Fail"
-	}
-	mongoRequestDuration.WithLabelValues(method, status).Observe((float64)(NowMillisecond() - start))
-	mongoRequestCount.WithLabelValues(method, status)
+func SetMongoMetrics(duration float64, method ,status string) {
+	mongoRequestDuration.WithLabelValues(method, status).Observe(duration)
+	mongoRequestCount.WithLabelValues(method, status).Add(1)
 }
 
 // SetRedisMetrics 设置redis指标
-func SetRedisMetrics(start int64, err error) {
-	method := runFuncName(4)
-	status := "Success"
-	if err != nil {
-		status = "Fail"
-	}
-	redisRequestDuration.WithLabelValues(method, status).Observe((float64)(NowMillisecond() - start))
-	redisRequestCount.WithLabelValues(method, status)
+func SetRedisMetrics(duration float64, method ,status string) {
+	redisRequestDuration.WithLabelValues(method, status).Observe(duration)
+	redisRequestCount.WithLabelValues(method, status).Add(1)
 }
 
-// NowMillisecond 获取当前的时间戳(微秒)
+func NowMicrosecond() (now int64) {
+	return time.Now().UnixMicro()
+}
+
 func NowMillisecond() (now int64) {
-	return time.Now().UnixNano() / int64(time.Microsecond)
+	return time.Now().UnixMilli()
 }
 
 // 获取正在运行的函数的"上*num"个函数名,例如3,main()->SetRedisMetrics()->runFuncName(),输出的则是"main"
