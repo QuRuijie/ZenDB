@@ -24,7 +24,7 @@ var _ = Describe("Test Redis", func() {
 
 	var client *RedisClient
 
-	//测试前初始化redis客户端,并清空!!!
+	// init client before Test
 	BeforeEach(func() {
 		opt := redis.Options{
 			Addr:               ADDR + ":" + PORT,
@@ -44,7 +44,7 @@ var _ = Describe("Test Redis", func() {
 		Expect(client.FlushDB().Err()).ShouldNot(HaveOccurred())
 	})
 
-	//测试后关闭redis客户端
+	// close client after Test
 	AfterEach(func() {
 		Expect(client.Close()).ShouldNot(HaveOccurred())
 	})
