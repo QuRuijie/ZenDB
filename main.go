@@ -1,14 +1,9 @@
 package main
 
 import (
-	"fmt"
-	"github.com/QuRuijie/zenDB/prom"
 	"github.com/QuRuijie/zenDB/zmgo"
-	"github.com/QuRuijie/zenDB/zredis"
-	"github.com/go-redis/redis"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"go.mongodb.org/mongo-driver/bson"
 	"time"
 )
 
@@ -42,10 +37,8 @@ var (
 )
 
 func main() {
-	//TestRedis()
-	TestMongo()
 }
-
+/*
 func TestMongo() {
 	c, err := zmgo.NewMongoClientWithProm("mongodb://127.0.0.1:27017/?compressors=disabled&gssapiServiceName=mongodb")
 	if err != nil {
@@ -87,3 +80,4 @@ func TestRedis() {
 
 	}
 }
+*/

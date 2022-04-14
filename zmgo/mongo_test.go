@@ -37,14 +37,6 @@ type User struct {
 	UpdatedAt time.Time `bson:"updatedAt"` // 更新时间
 }
 
-func (U *User) equals(I interface{}) bool {
-	if I == nil {
-		return false
-	}
-	u := I.(User)
-	return U.ID == u.ID && U.Name == u.Name
-}
-
 //TestMongo Test All Function
 func TestMongo(t *testing.T) {
 	t.Run("TestConnect", TestConnect)
@@ -111,9 +103,19 @@ func TestConnectMultiClient(t *testing.T) {
 		}
 	}
 
-	setFindClient(t)
+	SetFindClient(
+		func(projectId string) (*MongoClient, error) {
+			var client *MongoClient
+			if c, ok := gProjectClientMap[projectId]; ok {
+				client = c
+			} else {
+				client = gCommonClient
+			}
+			return client, nil
+		})
+	t.Log("SetSendClient Success")
 
-	c, err := findClient(DB_NAME)
+	c, err := GetClient(DB_NAME)
 	if err != nil || c == nil {
 		t.Fatalf("get client err:%v", err)
 	}
@@ -625,44 +627,15 @@ func TestNewMyCursorAndAll(t *testing.T) {
 	t.Log("TestNewMyCursorAndAll Success")
 }
 
-/**
- * Function for TestUnit
- */
-
-//setFindClient 传递FindClient方法
-func setFindClient(t *testing.T) {
-	SetFindClient(
-		func(projectId string) (*MongoClient, error) {
-			var client *MongoClient
-			if c, ok := gProjectClientMap[projectId]; ok {
-				client = c
-			} else {
-				client = gCommonClient
-			}
-			return client, nil
-		})
-	t.Log("SetSendClient Success")
-}
+//------------------- Function for TestUnit -------------------
 
 //initMongoClient 初始化mongo客户端并传递FindClient方法
 func initMongoClient(t *testing.T) {
 	var addrs = make(map[string]string)
 	addrs[DB_NAME] = URI
 
-	for key, uri := range addrs {
-		//client, err := NewDocumentClient(uri,caFilePath)
-		client, err := NewMongoClient(uri)
-		if err != nil {
-			t.Fatalf("initMongoClient fail=>%+v", err)
-		}
-
-		if key == "default" {
-			gCommonClient = client
-		} else {
-			gProjectClientMap[key] = client
-		}
-	}
-	setFindClient(t)
+	Init(addrs, true)
+	t.Log("initMongoClient Success !")
 }
 
 //insertTestData 插入测试数据
@@ -683,4 +656,12 @@ func deleteTestData(t *testing.T) {
 		t.Fatalf("deleteTestData fail=> %+v", err)
 	}
 	t.Log("deleteTestData Success")
+}
+
+func (U *User) equals(I interface{}) bool {
+	if I == nil {
+		return false
+	}
+	u := I.(User)
+	return U.ID == u.ID && U.Name == u.Name
 }

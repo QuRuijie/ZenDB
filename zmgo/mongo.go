@@ -8,7 +8,6 @@ import (
 	"github.com/QuRuijie/zenDB/prom"
 	"github.com/Zentertain/zenlog"
 	"github.com/pkg/errors"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -32,6 +31,12 @@ const (
 	MongoConnPoolLimit = 128
 )
 
+var (
+	ClientMap    map[string]*MongoClient
+	CommonClient *MongoClient
+	IsInit       bool
+)
+
 // ----------------------------------- Wrapper Mongo Client -----------------------------------
 
 type MongoClient struct {
@@ -46,8 +51,8 @@ func NewMongoClient(uri string) (*MongoClient, error) {
 }
 
 // NewMongoClientWithProm create MongoClient use Prom Monitor
-func NewMongoClientWithProm(uri string) (*MongoClient, error) {
-	return NewClient(true, getOptions(uri))
+func NewMongoClientWithProm(uri string, prom bool) (*MongoClient, error) {
+	return NewClient(prom, getOptions(uri))
 }
 
 //NewDocumentClient create MongoClient use default options.ClientOptions and TLS
@@ -126,7 +131,7 @@ func getOptions(uri string) *options.ClientOptions {
 // ----------------------------------- Common Method -----------------------------------
 
 func DB(projectId string, dbname string) *mongo.Database {
-	c, err := findClient(projectId)
+	c, err := GetClient(projectId)
 	if err != nil {
 		return nil
 	}
@@ -134,7 +139,7 @@ func DB(projectId string, dbname string) *mongo.Database {
 }
 
 func Collection(projectId, collection string) *mongo.Collection {
-	c, err := findClient(projectId)
+	c, err := GetClient(projectId)
 	if err == nil {
 		return c.DbColl(projectId, collection)
 	}
@@ -157,30 +162,51 @@ func (c *MongoClient) DbColl(dbName, coll string) *mongo.Collection {
 	return c.Database(dbName).Collection(coll)
 }
 
+// Init ClientMap and CommonClient
+func Init(adds map[string]string, prom bool) {
+	ClientMap = make(map[string]*MongoClient, len(adds))
+	for key, uri := range adds {
+		client, err := NewMongoClientWithProm(uri, prom)
+		if err != nil {
+			panic(err)
+		}
 
-// FC You can select your client by your self
-type FC func(projectId string) (*MongoClient, error)
-
-// FindClient If you want select client by yourself you need assign a value to this variable
-var FindClient FC
-
-//SetFindClient If you want select client by yourself you need execute it
-func SetFindClient(FindClientFunction FC) {
-	FindClient = FindClientFunction
+		if key == "default" {
+			CommonClient = client
+		} else {
+			ClientMap[key] = client
+		}
+	}
+	IsInit = true
 }
 
-// you must send a function what can return a MongoClient by your message
-var findClient FC = func(projectId string) (*MongoClient, error) {
-	if FindClient == nil {
-		return nil, errors.New("No function to return a client, please execute SetFindClient()!")
+// GetClientFunc You can select your client by yourself
+type GetClientFunc func(projectId string) (*MongoClient, error)
+
+// GetClient default GetClient func is get client from ClientMap
+var GetClient GetClientFunc = func(projectId string) (client *MongoClient, err error) {
+	if !IsInit {
+		err = errors.New("Mongo Client is not init!")
+		return
 	}
-	return FindClient(projectId)
+
+	if c, ok := ClientMap[projectId]; ok {
+		client = c
+	} else {
+		client = CommonClient
+	}
+	return
+}
+
+//SetFindClient If you want select client by yourself you can do it
+func SetFindClient(Func GetClientFunc) {
+	GetClient = Func
 }
 
 // --------------------------------- Method without Client ---------------------------------------
 
 func FindOne(result interface{}, proj string, collName string, query interface{}, opts ...*options.FindOneOptions) error {
-	c, err := findClient(proj)
+	c, err := GetClient(proj)
 	if err != nil {
 		return err
 	}
@@ -188,7 +214,7 @@ func FindOne(result interface{}, proj string, collName string, query interface{}
 }
 
 func FindAll(result interface{}, dbName, collName string, query interface{}, opts ...*options.FindOptions) error {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return err
 	}
@@ -196,7 +222,7 @@ func FindAll(result interface{}, dbName, collName string, query interface{}, opt
 }
 
 func FindOneAndUpdate(dbName, collName string, filter interface{}, update interface{}, opts ...*options.FindOneAndUpdateOptions) error {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return err
 	}
@@ -204,7 +230,7 @@ func FindOneAndUpdate(dbName, collName string, filter interface{}, update interf
 }
 
 func FindOneAndDelete(dbName, collName string, filter interface{}, opts ...*options.FindOneAndDeleteOptions) error {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return err
 	}
@@ -212,7 +238,7 @@ func FindOneAndDelete(dbName, collName string, filter interface{}, opts ...*opti
 }
 
 func UpdateOne(dbName, collName string, filter interface{}, update interface{}, opts ...*options.UpdateOptions) error {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return err
 	}
@@ -220,7 +246,7 @@ func UpdateOne(dbName, collName string, filter interface{}, update interface{}, 
 }
 
 func UpdateAll(dbName, collName string, filter interface{}, update interface{}, opts ...*options.UpdateOptions) error {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return err
 	}
@@ -228,7 +254,7 @@ func UpdateAll(dbName, collName string, filter interface{}, update interface{}, 
 }
 
 func UpsertOne(dbName, collName string, filter interface{}, update interface{}, opts ...*options.UpdateOptions) error {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return err
 	}
@@ -236,7 +262,7 @@ func UpsertOne(dbName, collName string, filter interface{}, update interface{}, 
 }
 
 func InsertOne(dbName, collName string, document interface{}, opts ...*options.InsertOneOptions) (interface{}, error) {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +270,7 @@ func InsertOne(dbName, collName string, document interface{}, opts ...*options.I
 }
 
 func InsertMany(dbName, collName string, documents []interface{}, opts ...*options.InsertManyOptions) (*mongo.InsertManyResult, error) {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +278,7 @@ func InsertMany(dbName, collName string, documents []interface{}, opts ...*optio
 }
 
 func DeleteOne(dbName, collName string, filter interface{}, opts ...*options.DeleteOptions) error {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return err
 	}
@@ -261,7 +287,7 @@ func DeleteOne(dbName, collName string, filter interface{}, opts ...*options.Del
 
 func DeleteMany(dbName, collName string, filter interface{}, opts ...*options.DeleteOptions) error {
 
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return err
 	}
@@ -269,7 +295,7 @@ func DeleteMany(dbName, collName string, filter interface{}, opts ...*options.De
 }
 
 func Count(dbName, collName string, filter interface{}, opts ...*options.CountOptions) (int64, error) {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return -1, err
 	}
@@ -277,7 +303,7 @@ func Count(dbName, collName string, filter interface{}, opts ...*options.CountOp
 }
 
 func Aggregate(result interface{}, dbName, collName string, pipeline interface{}, opts ...*options.AggregateOptions) error {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return err
 	}
@@ -285,7 +311,7 @@ func Aggregate(result interface{}, dbName, collName string, pipeline interface{}
 }
 
 func BulkWrite(dbName, collName string, models []mongo.WriteModel, opts ...*options.BulkWriteOptions) error {
-	c, err := findClient(dbName)
+	c, err := GetClient(dbName)
 	if err != nil {
 		return err
 	}
@@ -572,6 +598,50 @@ func NewTrue() *bool {
 
 // --------------------------------- About Database Index ----------------------------------------
 
+func EnsureExpireIndex(db *mongo.Database, collection string, expireTime int32, keys ...string) {
+	expireOpts := &options.IndexOptions{}
+	expireOpts.SetExpireAfterSeconds(expireTime)
+	ensureIndex(db, collection, expireOpts, keys...)
+}
+
+func EnsureUniqIndex(db *mongo.Database, collection string, keys ...string) {
+	uniqOpts := &options.IndexOptions{}
+	uniqOpts.SetUnique(true)
+	ensureIndex(db, collection, uniqOpts, keys...)
+}
+
+func EnsureIndex(db *mongo.Database, collection string, keys ...string) {
+	defaultOpts := &options.IndexOptions{}
+	ensureIndex(db, collection, defaultOpts, keys...)
+}
+
+func ensureIndex(db *mongo.Database, collection string, ops *options.IndexOptions, keys ...string) (string, error) {
+	indexes := db.Collection(collection).Indexes()
+	index := mongo.IndexModel{}
+	Keys := bsonx.Doc{}
+	indexName := strings.Builder{}
+
+	for _, k := range keys {
+		indexName.WriteString(k)
+		indexName.WriteString("_1_")
+		Keys = Keys.Append(k, bsonx.Int32(1))
+	}
+
+	name := indexName.String()
+	if ops == nil {
+		ops = &options.IndexOptions{}
+	}
+
+	ops.SetBackground(true)
+	ops.Name = NewString(name[:len(name)-1])
+
+	index.Options = ops
+	index.Keys = Keys
+
+	return indexes.CreateOne(context.Background(), index)
+}
+
+// 只有dataBoat 用, 而且可以改成上述方式
 func createIndex(c *mongo.Collection, key string, ascending bool, unique bool) {
 	opts := options.CreateIndexes().SetMaxTime(10 * time.Second)
 	index := makeIndex(key, ascending, unique)
@@ -597,71 +667,6 @@ func makeIndex(key string, ascending bool, unique bool) mongo.IndexModel {
 	index.Options = options.Index()
 	index.Options.Unique = &unique
 	return index
-}
-
-// 新功能的创建索引方式
-func ensureIndexKey(db *mongo.Database, collection string, ops *options.IndexOptions, keys ...string) {
-	indexes := db.Collection(collection).Indexes()
-	index := mongo.IndexModel{}
-	kk := bsonx.Doc{}
-	indexName := strings.Builder{}
-	for _, k := range keys {
-		indexName.WriteString(k)
-		indexName.WriteString("_1_")
-		kk = kk.Append(k, bsonx.Int32(1))
-	}
-	name := indexName.String()
-	if ops == nil {
-		ops = &options.IndexOptions{}
-	}
-	ops.SetBackground(true)
-	ops.Name = NewString(name[:len(name)-1])
-	index.Options = ops
-	index.Keys = kk
-
-	str, err := indexes.CreateOne(context.Background(), index)
-	if err != nil {
-		zenlog.Error("create index fail,%s %+v", db.Name(), err)
-	} else {
-		zenlog.Debug("create index,%s %+v", db.Name(), str)
-	}
-}
-
-func indexWithExpire(db *mongo.Database, collection string, expireTime int32, keys ...string) {
-	indexes := db.Collection(collection).Indexes()
-	index := mongo.IndexModel{}
-	ops := options.IndexOptions{}
-	ops.SetBackground(true)
-	ops.SetExpireAfterSeconds(expireTime)
-	index.Options = &ops
-
-	kk := bson.M{}
-	for _, k := range keys {
-		kk[k] = 1
-	}
-	index.Keys = kk
-
-	str, err := indexes.CreateOne(context.Background(), index)
-	if err != nil {
-		zenlog.Error("create expired index fail,%+v", err)
-	} else {
-		zenlog.Debug("create expired index,%+v", str)
-	}
-}
-
-func EnsureExpireIndex(db *mongo.Database, collection string, expireTime int32, keys ...string) {
-	indexWithExpire(db, collection, expireTime, keys...)
-}
-
-func EnsureUniqIndex(db *mongo.Database, collection string, keys ...string) {
-	uniqOps := &options.IndexOptions{}
-	uniqOps.SetUnique(true)
-	ensureIndexKey(db, collection, uniqOps, keys...)
-}
-
-func EnsureIndex(db *mongo.Database, collection string, keys ...string) {
-	defaultOps := &options.IndexOptions{}
-	ensureIndexKey(db, collection, defaultOps, keys...)
 }
 
 // --------------------------------- Prom Monitor----------------------------------------
