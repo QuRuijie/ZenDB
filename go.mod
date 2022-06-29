@@ -1,4 +1,4 @@
-module github.com/QuRuijie/zenDB
+module github.com/QuRuijie/zenDB/v3
 
 go 1.17
 
